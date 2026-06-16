@@ -106,6 +106,30 @@ def now_br() -> dt.datetime:
     return dt.datetime.now(dt.timezone(dt.timedelta(hours=-3))).replace(tzinfo=None)
 
 
+def cycle_window(today: dt.date, dia_fechamento: int) -> tuple[dt.date, dt.date]:
+    """Janela do ciclo de faturamento que contem `today`.
+    Fechamento no dia `dia_fechamento` -> ciclo vai do dia seguinte ao fechamento
+    do mes anterior ate o dia de fechamento deste mes. (Mesma regra do app do Fred.)"""
+    if today.day > dia_fechamento:
+        inicio = today.replace(day=dia_fechamento + 1)
+        mes_seguinte = (today.replace(day=1) + dt.timedelta(days=32)).replace(day=1)
+        try:
+            fim = mes_seguinte.replace(day=dia_fechamento)
+        except ValueError:
+            fim = mes_seguinte + dt.timedelta(days=dia_fechamento - 1)
+    else:
+        mes_passado = (today.replace(day=1) - dt.timedelta(days=1)).replace(day=1)
+        try:
+            inicio = mes_passado.replace(day=dia_fechamento + 1)
+        except ValueError:
+            inicio = mes_passado + dt.timedelta(days=dia_fechamento)
+        try:
+            fim = today.replace(day=dia_fechamento)
+        except ValueError:
+            fim = today
+    return inicio, fim
+
+
 @st.cache_resource
 def get_client():
     user = cfg("SOLARZ_USERNAME")
@@ -135,6 +159,11 @@ def load_month(_c, ref_iso):
 @st.cache_data(ttl=600)
 def load_all(_c, ref_iso):
     return _c.all_time(dt.date.fromisoformat(ref_iso))
+
+
+@st.cache_data(ttl=300)
+def load_period(_c, start_iso, end_iso):
+    return _c.period(dt.date.fromisoformat(start_iso), dt.date.fromisoformat(end_iso), period="month")
 
 
 TEMPLATE = Path(__file__).parent / "dashboard_template.html"
@@ -169,6 +198,23 @@ def build_vars() -> dict:
                  {"dias": [], "total_kwh": 0, "total_prognostico": 0, "desempenho": 0, "inversor": ""})
     allt = _try(lambda: load_all(client, today.isoformat()),
                 {"dias": [], "total_kwh": 0})
+
+    # --- ciclo de faturamento (conta de luz) ---
+    try:
+        dia_fechamento = int(str(cfg("DIA_FECHAMENTO_CICLO", "11")).strip())
+    except (TypeError, ValueError):
+        dia_fechamento = 11
+    ciclo_inicio, ciclo_fim = cycle_window(today, dia_fechamento)
+    ciclo = _try(lambda: load_period(client, ciclo_inicio.isoformat(), today.isoformat()),
+                 {"dias": [], "total_kwh": 0, "total_prognostico": 0, "desempenho": 0})
+    ciclo_kwh = ciclo["total_kwh"]
+    ciclo_dias_passados = max(1, (today - ciclo_inicio).days + 1)
+    ciclo_dias_total = max(1, (ciclo_fim - ciclo_inicio).days + 1)
+    ciclo_dias_left = max(0, (ciclo_fim - today).days)
+    ciclo_progress = min(100, ciclo_dias_passados / ciclo_dias_total * 100)
+    ciclo_dias_gerando = [d for d in ciclo["dias"] if d.kwh > 0]
+    ciclo_media = (ciclo_kwh / len(ciclo_dias_gerando)) if ciclo_dias_gerando else 0
+    ciclo_projecao = ciclo_media * ciclo_dias_total
 
     # --- curva do dia -> pontos [hora_decimal, kw] ---
     curva = day["curva"]
@@ -307,6 +353,12 @@ def build_vars() -> dict:
         "DAY_BARS_JSON": json.dumps(day_bars),
         "MONTH_BARS_JSON": json.dumps(month_bars),
         "LULA_IMG": lula_data_uri(),
+        # ciclo de faturamento
+        "CYCLE_START": ciclo_inicio.strftime("%d/%m"), "CYCLE_END": ciclo_fim.strftime("%d/%m"),
+        "CYCLE_DAY": str(ciclo_dias_passados), "CYCLE_DAYS_TOTAL": str(ciclo_dias_total),
+        "CYCLE_DAYS_LEFT": str(ciclo_dias_left), "CYCLE_PROGRESS_PCT": f"{ciclo_progress:.1f}",
+        "CYCLE_KWH": fmt_num(ciclo_kwh, 1), "CYCLE_PROJECTED": fmt_num(ciclo_projecao, 0),
+        "CYCLE_AVG": fmt_num(ciclo_media, 0),
     }
 
 
@@ -320,7 +372,7 @@ def render():
         return
     for k, val in v.items():
         template = template.replace("{{" + k + "}}", str(val))
-    components.html(template, height=2360, scrolling=False)
+    components.html(template, height=2620, scrolling=False)
 
 
 render()

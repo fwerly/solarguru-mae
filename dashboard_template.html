@@ -135,6 +135,52 @@
     </div>
   </section>
 
+  <!-- CICLO DE FATURAMENTO -->
+  <section class="mb-10">
+    <div class="flex items-end justify-between mb-4">
+      <div class="eyebrow">Ciclo da conta de luz</div>
+      <div class="text-ink-3" style="font-size: 12px;">{{CYCLE_START}} → {{CYCLE_END}} · dia {{CYCLE_DAY}} de {{CYCLE_DAYS_TOTAL}}</div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="card card-lg grad-cream ring-faint p-6">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="ic-bg" style="background:#fff3c4; width:24px; height:24px; border-radius:7px;">
+            <svg width="13" height="13" viewBox="0 0 24 24"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z" fill="#c77a00"/></svg>
+          </span>
+          <span style="font-size:12px; font-weight:500; color:#8a5a00;">Gerou neste ciclo até agora</span>
+        </div>
+        <div class="num-tight num-40" style="font-size: 40px; font-weight: 700; color:#1d1d1f;">
+          {{CYCLE_KWH}}<span style="font-size:18px; font-weight:500; color:#8a5a00; margin-left:6px;">kWh</span>
+        </div>
+        <div class="text-ink-2 mt-2" style="font-size: 13px;">
+          De {{CYCLE_START}} até hoje · faltam <b style="color:var(--ink-1);">{{CYCLE_DAYS_LEFT}} dias</b> para fechar
+        </div>
+        <div class="mt-4">
+          <div style="height:6px; border-radius:999px; background:rgba(255,159,10,0.18); overflow:hidden;">
+            <span style="display:block; height:100%; width:{{CYCLE_PROGRESS_PCT}}%; background:#ff9f0a; border-radius:999px;"></span>
+          </div>
+          <div class="flex justify-between mt-2 text-ink-3" style="font-size: 11px;">
+            <span>Dia {{CYCLE_DAY}}</span><span>de {{CYCLE_DAYS_TOTAL}}</span>
+          </div>
+        </div>
+      </div>
+      <div class="card card-lg grad-blue ring-faint p-6">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="ic-bg" style="background:#d6e7fd; width:24px; height:24px; border-radius:7px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0a5ec7" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>
+          </span>
+          <span style="font-size:12px; font-weight:500; color:#0a5ec7;">Projeção até o fim do ciclo</span>
+        </div>
+        <div class="num-tight num-40" style="font-size: 40px; font-weight: 700;">
+          {{CYCLE_PROJECTED}}<span style="font-size:18px; font-weight:500; color:#0a5ec7; margin-left:6px;">kWh</span>
+        </div>
+        <div class="text-ink-2 mt-2" style="font-size: 13px;">
+          No ritmo de ~{{CYCLE_AVG}} kWh/dia · é o que deve bater na conta
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- DESEMPENHO (destaque) -->
   <section class="mb-10">
     <div class="eyebrow mb-4">Desempenho no mês</div>

@@ -28,9 +28,15 @@ st.markdown(
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         html, body, .stApp, [class*="css"] { font-family: "Inter", -apple-system, sans-serif !important; -webkit-font-smoothing: antialiased; }
-        .stApp > header { display: none; }
+        /* esconde toda a moldura do Streamlit (barra branca do topo, menu, rodape) */
+        header[data-testid="stHeader"], [data-testid="stHeader"], .stApp > header { display: none !important; }
+        [data-testid="stDecoration"] { display: none !important; }
+        [data-testid="stToolbar"] { display: none !important; }
+        [data-testid="stStatusWidget"] { display: none !important; }
+        #MainMenu { visibility: hidden; }
+        footer { display: none !important; }
         .block-container { padding: 0 !important; max-width: 100% !important; }
-        [data-testid="stToolbar"] { display: none; } footer { display: none; }
+        .stApp { margin-top: 0 !important; }
     </style>
     """,
     unsafe_allow_html=True,

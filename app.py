@@ -152,18 +152,13 @@ def load_day(_c, date_iso):
 
 
 @st.cache_data(ttl=300)
-def load_month(_c, ref_iso):
-    return _c.month_total(dt.date.fromisoformat(ref_iso))
-
-
-@st.cache_data(ttl=600)
 def load_all(_c, ref_iso):
-    return _c.all_time(dt.date.fromisoformat(ref_iso))
-
-
-@st.cache_data(ttl=300)
-def load_period(_c, start_iso, end_iso):
-    return _c.period(dt.date.fromisoformat(start_iso), dt.date.fromisoformat(end_iso), period="month")
+    """Historico diario (fonte unica p/ mes, ciclo, graficos). Se vier vazio,
+    levanta excecao -> NAO cacheia o vazio -> proximo refresh tenta de novo."""
+    r = _c.all_time(dt.date.fromisoformat(ref_iso))
+    if not r.get("dias"):
+        raise RuntimeError("historico vazio (provavel hiccup da API) - nao cachear")
+    return r
 
 
 TEMPLATE = Path(__file__).parent / "dashboard_template.html"
@@ -192,28 +187,35 @@ def build_vars() -> dict:
         except Exception:
             return fallback
 
+    # So 2 chamadas: a curva intraday (day) e o historico diario (allt).
+    # Mes, ciclo, desempenho e graficos sao DERIVADOS do historico -> menos
+    # chamadas em rajada na SolarZ (evita estrangulamento/zeros no cold start).
     day = _try(lambda: load_day(client, today.isoformat()),
                {"curva": {}, "total_kwh": 0, "potencia_atual": 0, "prognostico": 0, "inversor": ""})
-    month = _try(lambda: load_month(client, today.isoformat()),
-                 {"dias": [], "total_kwh": 0, "total_prognostico": 0, "desempenho": 0, "inversor": ""})
     allt = _try(lambda: load_all(client, today.isoformat()),
-                {"dias": [], "total_kwh": 0})
+                {"dias": [], "total_kwh": 0, "inversor": ""})
+    dias_all = allt["dias"]
 
-    # --- ciclo de faturamento (conta de luz) ---
+    def _janela(ini: dt.date, fim: dt.date):
+        """Dias do historico entre ini e fim (inclusive) + somas."""
+        sel = [d for d in dias_all if ini.isoformat() <= norm_date(d.data) <= fim.isoformat()]
+        kwh = sum(d.kwh for d in sel)
+        prog = sum(d.prognostico for d in sel)
+        ger = [d for d in sel if d.kwh > 0]
+        return sel, kwh, prog, ger
+
+    # --- ciclo de faturamento (derivado do historico) ---
     try:
         dia_fechamento = int(str(cfg("DIA_FECHAMENTO_CICLO", "11")).strip())
     except (TypeError, ValueError):
         dia_fechamento = 11
     ciclo_inicio, ciclo_fim = cycle_window(today, dia_fechamento)
-    ciclo = _try(lambda: load_period(client, ciclo_inicio.isoformat(), today.isoformat()),
-                 {"dias": [], "total_kwh": 0, "total_prognostico": 0, "desempenho": 0})
-    ciclo_kwh = ciclo["total_kwh"]
+    _, ciclo_kwh, ciclo_prog, ciclo_ger = _janela(ciclo_inicio, today)
     ciclo_dias_passados = max(1, (today - ciclo_inicio).days + 1)
     ciclo_dias_total = max(1, (ciclo_fim - ciclo_inicio).days + 1)
     ciclo_dias_left = max(0, (ciclo_fim - today).days)
     ciclo_progress = min(100, ciclo_dias_passados / ciclo_dias_total * 100)
-    ciclo_dias_gerando = [d for d in ciclo["dias"] if d.kwh > 0]
-    ciclo_media = (ciclo_kwh / len(ciclo_dias_gerando)) if ciclo_dias_gerando else 0
+    ciclo_media = (ciclo_kwh / len(ciclo_ger)) if ciclo_ger else 0
     ciclo_projecao = ciclo_media * ciclo_dias_total
 
     # --- curva do dia -> pontos [hora_decimal, kw] ---
@@ -244,19 +246,20 @@ def build_vars() -> dict:
 
     # clima de hoje: do ultimo dia do historico (se for hoje)
     today_weather = ""
-    dias_all = allt["dias"]
     if dias_all and norm_date(dias_all[-1].data) == today.isoformat():
         today_weather = dias_all[-1].clima
     today_emoji = weather_emoji(today_weather)
 
-    # --- mes ---
-    month_kwh = month["total_kwh"]
-    month_forecast = month["total_prognostico"]
-    desempenho = month["desempenho"]
-    dias_mes = [d for d in month["dias"] if d.kwh > 0]
+    # --- mes civil (derivado do historico) ---
+    mes_prefix = today.strftime("%Y-%m")
+    dias_mes_all = [d for d in dias_all if norm_date(d.data).startswith(mes_prefix)]
+    month_kwh = sum(d.kwh for d in dias_mes_all)
+    month_forecast = sum(d.prognostico for d in dias_mes_all)
+    desempenho = (month_kwh / month_forecast * 100) if month_forecast > 0 else 0
+    dias_mes = [d for d in dias_mes_all if d.kwh > 0]
     avg_daily = (month_kwh / len(dias_mes)) if dias_mes else 0
-    if month["dias"]:
-        best = max(month["dias"], key=lambda d: d.kwh)
+    if dias_mes_all:
+        best = max(dias_mes_all, key=lambda d: d.kwh)
         bd = norm_date(best.data)
         best_day = f"{fmt_num(best.kwh,1)} kWh ({bd[8:10]}/{bd[5:7]})" if best.kwh else "—"
     else:
@@ -307,7 +310,7 @@ def build_vars() -> dict:
     month_bars = [{"label": f"{MESES_ABBR[int(k[5:7])]}/{k[2:4]}", "kwh": round(v, 1)}
                   for k, v in sorted(mensal.items())]
 
-    inversor = month.get("inversor") or day.get("inversor") or "—"
+    inversor = allt.get("inversor") or day.get("inversor") or "—"
 
     # --- status / cores ---
     if not ok:

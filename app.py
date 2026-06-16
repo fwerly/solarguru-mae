@@ -381,7 +381,12 @@ def build_vars() -> dict:
         "CYCLE_DAYS_LEFT": str(ciclo_dias_left), "CYCLE_PROGRESS_PCT": f"{ciclo_progress:.1f}",
         "CYCLE_KWH": fmt_num(ciclo_kwh, 1), "CYCLE_PROJECTED": fmt_num(ciclo_projecao, 0),
         "CYCLE_AVG": fmt_num(ciclo_media, 0),
-        "DIAG": " · ".join(diag),
+        # diag so aparece quando ha problema (em operacao normal fica invisivel)
+        "DIAG_LINE": (
+            ""
+            if (ok and len(dias_all) > 0 and not any(("ERRO" in d or "ULTIMO_BOM" in d) for d in diag))
+            else f'<p class="mt-1" style="font-size:10px; color:#c4c4cc;">diag: {" · ".join(diag)}</p>'
+        ),
     }
 
 

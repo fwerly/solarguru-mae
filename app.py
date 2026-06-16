@@ -168,10 +168,13 @@ def build_vars() -> dict:
     now = now_br()
     today = now.date()
 
+    diag = []  # auto-diagnostico (aparece discreto no rodape p/ achar a causa de zeros)
     try:
         client = get_client()
-    except Exception:
+        diag.append("login=OK")
+    except Exception as e:
         client = None
+        diag.append(f"login=ERRO[{type(e).__name__}:{str(e)[:70]}]")
     ok = client is not None
 
     plant_name = client.usina.nome if (ok and client.usina) else "Usina solar"
@@ -179,22 +182,25 @@ def build_vars() -> dict:
 
     # cada fonte e independente: se uma falhar, as outras ainda aparecem,
     # e a que falhou NAO fica em cache (tenta de novo no proximo refresh)
-    def _try(fn, fallback):
+    def _try(fn, fallback, label=""):
         if not ok:
             return fallback
         try:
             return fn()
-        except Exception:
+        except Exception as e:
+            diag.append(f"{label}=ERRO[{type(e).__name__}:{str(e)[:70]}]")
             return fallback
 
     # So 2 chamadas: a curva intraday (day) e o historico diario (allt).
     # Mes, ciclo, desempenho e graficos sao DERIVADOS do historico -> menos
     # chamadas em rajada na SolarZ (evita estrangulamento/zeros no cold start).
     day = _try(lambda: load_day(client, today.isoformat()),
-               {"curva": {}, "total_kwh": 0, "potencia_atual": 0, "prognostico": 0, "inversor": ""})
+               {"curva": {}, "total_kwh": 0, "potencia_atual": 0, "prognostico": 0, "inversor": ""}, "dia")
     allt = _try(lambda: load_all(client, today.isoformat()),
-                {"dias": [], "total_kwh": 0, "inversor": ""})
+                {"dias": [], "total_kwh": 0, "inversor": ""}, "hist")
     dias_all = allt["dias"]
+    if ok:
+        diag.append(f"hist={len(dias_all)}d")
 
     def _janela(ini: dt.date, fim: dt.date):
         """Dias do historico entre ini e fim (inclusive) + somas."""
@@ -362,6 +368,7 @@ def build_vars() -> dict:
         "CYCLE_DAYS_LEFT": str(ciclo_dias_left), "CYCLE_PROGRESS_PCT": f"{ciclo_progress:.1f}",
         "CYCLE_KWH": fmt_num(ciclo_kwh, 1), "CYCLE_PROJECTED": fmt_num(ciclo_projecao, 0),
         "CYCLE_AVG": fmt_num(ciclo_media, 0),
+        "DIAG": " · ".join(diag),
     }
 
 

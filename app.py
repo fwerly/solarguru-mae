@@ -163,6 +163,9 @@ def load_all(_c, ref_iso):
 
 TEMPLATE = Path(__file__).parent / "dashboard_template.html"
 
+# guarda o ultimo historico valido (persiste entre refreshes enquanto o app vive)
+_LAST_GOOD: dict = {}
+
 
 def build_vars() -> dict:
     now = now_br()
@@ -176,6 +179,8 @@ def build_vars() -> dict:
         client = None
         diag.append(f"login=ERRO[{type(e).__name__}:{str(e)[:70]}]")
     ok = client is not None
+    if ok:
+        diag.append(f"usina={client.usina.id if client.usina else 'NONE'}")
 
     plant_name = client.usina.nome if (ok and client.usina) else "Usina solar"
     nome_user = cfg("NOME_USUARIO", "Wanda")
@@ -200,7 +205,15 @@ def build_vars() -> dict:
                 {"dias": [], "total_kwh": 0, "inversor": ""}, "hist")
     dias_all = allt["dias"]
     if ok:
-        diag.append(f"hist={len(dias_all)}d")
+        diag.append(f"phttp={getattr(client,'last_status',None)} pdados={getattr(client,'last_dados_len',None)}")
+    # guarda o ultimo historico BOM e reusa se a busca atual vier vazia (evita zerar em hiccup)
+    if dias_all:
+        _LAST_GOOD["allt"] = allt
+    elif _LAST_GOOD.get("allt"):
+        allt = _LAST_GOOD["allt"]
+        dias_all = allt["dias"]
+        diag.append("hist=ULTIMO_BOM")
+    diag.append(f"hist={len(dias_all)}d")
 
     def _janela(ini: dt.date, fim: dt.date):
         """Dias do historico entre ini e fim (inclusive) + somas."""
@@ -386,4 +399,5 @@ def render():
 
 
 render()
-st.markdown("<script>setTimeout(function(){window.location.reload();},60000);</script>", unsafe_allow_html=True)
+# refresh a cada 5 min (menos chamadas na SolarZ -> menos chance de throttle/vazio)
+st.markdown("<script>setTimeout(function(){window.location.reload();},300000);</script>", unsafe_allow_html=True)

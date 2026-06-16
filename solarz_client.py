@@ -52,7 +52,11 @@ class SolarZClient:
             "Accept": "application/json",
             "Content-Type": "application/json",
             "User-Agent": UA,
+            "Referer": "https://app.solarz.com.br/",
+            "Origin": "https://app.solarz.com.br",
         })
+        self.last_status = None      # diagnostico: ultimo HTTP do _get
+        self.last_dados_len = None   # diagnostico: ultimo nro de pontos do period
         # repete automaticamente em falhas transitorias (5xx, timeout, conexao)
         if Retry is not None:
             retry = Retry(total=3, backoff_factor=0.6,
@@ -96,6 +100,7 @@ class SolarZClient:
             self._logged_in = False
             self.login()
             r = self.s.get(f"{BASE_URL}{path}", params=params, timeout=25)
+        self.last_status = r.status_code
         r.raise_for_status()
         return r.json()
 
@@ -191,12 +196,13 @@ class SolarZClient:
             "unitePortals": "true",
         }
         data = {}
-        for attempt in range(4):
+        for attempt in range(2):
             data = self._get("/api-sz/generation/period", params=params)
             if data.get("dados"):
                 break
-            if attempt < 3:
+            if attempt < 1:
                 time.sleep(0.7)
+        self.last_dados_len = len(data.get("dados", []))
         dias: list[DiaGeracao] = []
         for d in data.get("dados", []):
             clima = ""

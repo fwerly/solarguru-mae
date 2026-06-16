@@ -13,6 +13,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+
+try:
+    from urllib3.util.retry import Retry
+except Exception:  # pragma: no cover
+    Retry = None
 
 BASE_URL = "https://app.solarz.com.br"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -46,6 +52,14 @@ class SolarZClient:
             "Content-Type": "application/json",
             "User-Agent": UA,
         })
+        # repete automaticamente em falhas transitorias (5xx, timeout, conexao)
+        if Retry is not None:
+            retry = Retry(total=3, backoff_factor=0.6,
+                          status_forcelist=[429, 500, 502, 503, 504],
+                          allowed_methods=["GET", "POST"])
+            adapter = HTTPAdapter(max_retries=retry)
+            self.s.mount("https://", adapter)
+            self.s.mount("http://", adapter)
         self._logged_in = False
         self.usina: Usina | None = None
         self.context: dict[str, Any] = {}
@@ -70,6 +84,19 @@ class SolarZClient:
     def _ensure(self) -> None:
         if not self._logged_in:
             self.login()
+
+    def _get(self, path: str, params: dict | None = None) -> Any:
+        """GET autenticado. Re-loga uma vez se o token expirou. Levanta excecao
+        em falha persistente (para NAO cachear erro na camada de cima)."""
+        self._ensure()
+        r = self.s.get(f"{BASE_URL}{path}", params=params, timeout=25)
+        if r.status_code in (401, 403):
+            # token expirou — re-loga e tenta de novo
+            self._logged_in = False
+            self.login()
+            r = self.s.get(f"{BASE_URL}{path}", params=params, timeout=25)
+        r.raise_for_status()
+        return r.json()
 
     def _load_context(self) -> None:
         r = self.s.get(f"{BASE_URL}/cliente/context", timeout=20)
@@ -97,14 +124,10 @@ class SolarZClient:
         self._ensure()
         if not self.usina:
             return {"curva": {}, "total_kwh": 0.0, "potencia_atual": 0.0, "prognostico": 0.0, "inversor": ""}
-        r = self.s.get(
-            f"{BASE_URL}/api-sz/generation/day",
+        data = self._get(
+            "/api-sz/generation/day",
             params={"usinaId": self.usina.id, "day": date.isoformat(), "unitePortals": "true"},
-            timeout=20,
         )
-        if r.status_code != 200:
-            return {"curva": {}, "total_kwh": 0.0, "potencia_atual": 0.0, "prognostico": 0.0, "inversor": ""}
-        data = r.json()
 
         curva: dict[str, float] = {}
         for d in data.get("dados", []):
@@ -156,8 +179,8 @@ class SolarZClient:
         self._ensure()
         if not self.usina:
             return {"dias": [], "total_kwh": 0.0, "total_prognostico": 0.0, "desempenho": 0.0}
-        r = self.s.get(
-            f"{BASE_URL}/api-sz/generation/period",
+        data = self._get(
+            "/api-sz/generation/period",
             params={
                 "usinaId": self.usina.id,
                 "start": start.isoformat(),
@@ -166,11 +189,7 @@ class SolarZClient:
                 "uniteMonths": "false",
                 "unitePortals": "true",
             },
-            timeout=30,
         )
-        if r.status_code != 200:
-            return {"dias": [], "total_kwh": 0.0, "total_prognostico": 0.0, "desempenho": 0.0}
-        data = r.json()
         dias: list[DiaGeracao] = []
         for d in data.get("dados", []):
             clima = ""

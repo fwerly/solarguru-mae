@@ -100,62 +100,75 @@ def lula_data_uri() -> str:
     return f"data:image/jpeg;base64,{b64}"
 
 
+def now_br() -> dt.datetime:
+    """Horario de Brasilia (UTC-3, sem horario de verao). O servidor do
+    Streamlit Cloud roda em UTC; isso garante data/saudacao corretas."""
+    return dt.datetime.now(dt.timezone(dt.timedelta(hours=-3))).replace(tzinfo=None)
+
+
 @st.cache_resource
 def get_client():
     user = cfg("SOLARZ_USERNAME")
     pw = cfg("SOLARZ_PASSWORD")
     if not user or not pw:
         return None
-    try:
-        c = SolarZClient(user, pw)
-        c.login()
-        return c
-    except Exception:
-        return None
+    # NAO captura excecao: se o login falhar (transitorio), o cache_resource
+    # nao guarda o erro e a proxima execucao tenta de novo.
+    c = SolarZClient(user, pw)
+    c.login()
+    return c
 
 
+# Loaders SEM try/except: se a API falhar, a excecao sobe e o st.cache_data
+# NAO cacheia o erro -> o proximo refresh (60s) tenta de novo. O fallback
+# para zeros acontece so na renderizacao (build_vars), nunca no cache.
 @st.cache_data(ttl=60)
 def load_day(_c, date_iso):
-    try:
-        return _c.day(dt.date.fromisoformat(date_iso))
-    except Exception:
-        return None
+    return _c.day(dt.date.fromisoformat(date_iso))
 
 
 @st.cache_data(ttl=300)
 def load_month(_c, ref_iso):
-    try:
-        return _c.month_total(dt.date.fromisoformat(ref_iso))
-    except Exception:
-        return None
+    return _c.month_total(dt.date.fromisoformat(ref_iso))
 
 
 @st.cache_data(ttl=600)
 def load_all(_c, ref_iso):
-    try:
-        return _c.all_time(dt.date.fromisoformat(ref_iso))
-    except Exception:
-        return None
+    return _c.all_time(dt.date.fromisoformat(ref_iso))
 
 
 TEMPLATE = Path(__file__).parent / "dashboard_template.html"
 
 
 def build_vars() -> dict:
-    now = dt.datetime.now()
+    now = now_br()
     today = now.date()
-    client = get_client()
+
+    try:
+        client = get_client()
+    except Exception:
+        client = None
     ok = client is not None
 
     plant_name = client.usina.nome if (ok and client.usina) else "Usina solar"
     nome_user = cfg("NOME_USUARIO", "Wanda")
 
-    day = load_day(client, today.isoformat()) if ok else None
-    month = load_month(client, today.isoformat()) if ok else None
-    allt = load_all(client, today.isoformat()) if ok else None
-    day = day or {"curva": {}, "total_kwh": 0, "potencia_atual": 0, "prognostico": 0, "inversor": ""}
-    month = month or {"dias": [], "total_kwh": 0, "total_prognostico": 0, "desempenho": 0, "inversor": ""}
-    allt = allt or {"dias": [], "total_kwh": 0}
+    # cada fonte e independente: se uma falhar, as outras ainda aparecem,
+    # e a que falhou NAO fica em cache (tenta de novo no proximo refresh)
+    def _try(fn, fallback):
+        if not ok:
+            return fallback
+        try:
+            return fn()
+        except Exception:
+            return fallback
+
+    day = _try(lambda: load_day(client, today.isoformat()),
+               {"curva": {}, "total_kwh": 0, "potencia_atual": 0, "prognostico": 0, "inversor": ""})
+    month = _try(lambda: load_month(client, today.isoformat()),
+                 {"dias": [], "total_kwh": 0, "total_prognostico": 0, "desempenho": 0, "inversor": ""})
+    allt = _try(lambda: load_all(client, today.isoformat()),
+                {"dias": [], "total_kwh": 0})
 
     # --- curva do dia -> pontos [hora_decimal, kw] ---
     curva = day["curva"]

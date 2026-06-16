@@ -9,6 +9,7 @@ Referencia: github.com/opastorello/SolarZAPI
 from __future__ import annotations
 
 import datetime as dt
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -179,17 +180,23 @@ class SolarZClient:
         self._ensure()
         if not self.usina:
             return {"dias": [], "total_kwh": 0.0, "total_prognostico": 0.0, "desempenho": 0.0}
-        data = self._get(
-            "/api-sz/generation/period",
-            params={
-                "usinaId": self.usina.id,
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "period": period,
-                "uniteMonths": "false",
-                "unitePortals": "true",
-            },
-        )
+        # A SolarZ as vezes devolve 200 com 'dados' vazio (hiccup, sobretudo em
+        # faixas grandes ou vindo de fora do BR). Repete algumas vezes na hora.
+        params = {
+            "usinaId": self.usina.id,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "period": period,
+            "uniteMonths": "false",
+            "unitePortals": "true",
+        }
+        data = {}
+        for attempt in range(4):
+            data = self._get("/api-sz/generation/period", params=params)
+            if data.get("dados"):
+                break
+            if attempt < 3:
+                time.sleep(0.7)
         dias: list[DiaGeracao] = []
         for d in data.get("dados", []):
             clima = ""
@@ -236,9 +243,12 @@ class SolarZClient:
         return self.period(ref.replace(day=1), ref, period="month")
 
     def all_time(self, ref: dt.date | None = None) -> dict[str, Any]:
-        """Total historico — consulta de uma data bem antiga ate hoje."""
+        """Historico recente (janela limitada ~13 meses). Faixa pequena evita o
+        hiccup de 'dados vazio' que a SolarZ devolve em consultas muito longas.
+        period='month' e o modo comprovadamente estavel na nuvem."""
         ref = ref or dt.date.today()
-        return self.period(dt.date(2019, 1, 1), ref, period="year")
+        start = ref - dt.timedelta(days=400)
+        return self.period(start, ref, period="month")
 
     def credits(self) -> list[dict[str, Any]]:
         """Credito corrente das unidades (kWh)."""
